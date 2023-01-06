@@ -1,123 +1,63 @@
+// TODO: Remove deprecated garbage?
+import { exists } from "https://deno.land/std@0.171.0/fs/exists.ts";
+
+import axiod from "https://deno.land/x/axiod@0.26.2/mod.ts";
+
+import { getRandomInt } from "./libs/rand.js";
 import { runShell } from "./libs/os.js";
-import { joinPath } from "./libs/join.js";
-import { loadLunarCommand } from "./startLunar.js";
 
-import { existsSync } from "https://deno.land/std@0.152.0/fs/mod.ts";
-import { Confirm, Input } from "https://deno.land/x/cliffy@v0.24.3/mod.ts";
-import dir from "https://deno.land/x/dir/mod.ts";
+import { loadMinecraftCMD } from "./libopenmc/mod.js";
 
-if (!existsSync(dir("home"), ".lunarclient", "settings", "launcher.json")) {
-  console.error("ERROR: Lunar client config does not exist.");
+const randWelcomeMessages = ["let me guess, breaking the law??", "what it pineapple+pen?", "Eagle wuz here", "your rap name is lil + the last reason you were in the hospital", "Me when the Judge sentences me to show results", "What if we sat on the Jouch?? :flushed:", "$jndi:lfap('https://nsa.gov/hax/ip')", "Windows 12 ISO LEAK (NOT CLICKBAIT)"]
+
+console.log("OpenMC2 is loading...");
+console.log("  // " + randWelcomeMessages[getRandomInt(0, randWelcomeMessages.length-1)])
+
+console.log("INFO: Detecting Minecraft...");
+
+if (!Deno.args[0]) {
+  console.error("OpenMC2: No arguments specified! (take it to twitter?)");
+  Deno.exit(1);
+} else if (!await exists(Deno.args[0])) {
+  console.error("OpenMC2: The directory specified doesn't exist. (take it to twitter, fr)");
   Deno.exit(1);
 }
 
-const lunarConfig = JSON.parse(
-  await Deno.readTextFile(
-    await joinPath(dir("home"), ".lunarclient", "settings", "launcher.json")
-  )
+let mcVer = null;
+
+for await (const i of Deno.readDir(Deno.args[0])) {
+  if (i.isFile && i.name.endsWith(".jar")) mcVer = i.name.replace(".jar", "");
+}
+
+if (!mcVer) {
+  console.error("OpenMC2: Failed to detect a valid Minecraft version!");
+  Deno.exit(1);
+}
+
+console.log("INFO: Fetching Minecraft version list...");
+
+const launcherManifest = await axiod.get(
+  "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 );
 
-// FIXME: Reading the file twice is a bit redundant.
-if (!existsSync("config.json")) {
-  await Deno.writeTextFile(
-    "config.json",
-    JSON.stringify(
-      {
-        serverIP: "None",
-      },
-      null,
-      2
-    )
-  );
+const verData = launcherManifest.data.versions.find((i) => i.id == mcVer);
+
+if (!verData) {
+  console.error("OpenMC2: Failed to detect version URL!");
+  Deno.exit(1);
 }
 
-const localConfig = JSON.parse(await Deno.readTextFile("config.json"));
+const verExtData = await axiod.get(verData.url);
+const className = verExtData.data.mainClass;
 
-if (await Confirm.prompt("Would you like to modify your selected options?")) {
-  let version, server, enableBlacklistedMods;
-  const lunarPathDefault = localConfig.customLunarPath
-    ? localConfig.customLunarPath
-    : await joinPath(dir("home"), ".lunarclient"); // Jank is my middle name
-  let lunarPath = lunarPathDefault;
+console.log("INFO: Loading loader command.");
 
-  version = await Input.prompt({
-    message: "What version should I use?",
-    default: lunarConfig.selectedSubversion,
-  });
+const mineCMD = await loadMinecraftCMD(Deno.args[0].replaceAll("\\", "/"), mcVer + ".jar", mcVer, className, "jeb_", 0);
+console.log("INFO: Starting Minecraft...");
 
-  server = await Input.prompt({
-    message: "What server IP should I join?",
-    default: localConfig.serverIP,
-  });
+// FIXME: Minecraft doesn't start unless started via cmd, fully.
+const script = `@echo off\ncd "${Deno.args[0]}"\n${mineCMD}`;
 
-  lunarPath = await Input.prompt({
-    message: "Where is Lunar Client located?",
-    default: lunarPath,
-  });
-
-  enableBlacklistedMods = await Confirm.prompt(
-    `Should I enable mods like Solar Tweaks? (currently set to '${
-      localConfig.enableBlacklistedMods ? "Yes" : "No"
-    }')`
-  );
-
-  if (server != localConfig.serverIP) {
-    let config = localConfig; // Is let needed?
-    config.serverIP = server;
-
-    await Deno.writeTextFile("config.json", JSON.stringify(config, null, 2));
-  }
-  
-  if (enableBlacklistedMods != localConfig.enableBlacklistedMods) {
-    let config = localConfig; // Is let needed?
-    config.enableBlacklistedMods = enableBlacklistedMods;
-
-    await Deno.writeTextFile("config.json", JSON.stringify(config, null, 2));
-  }
-
-  if (lunarPath != lunarPathDefault) {
-    let config = localConfig;
-    config.customLunarPath = lunarPath;
-
-    await Deno.writeTextFile("config.json", JSON.stringify(config, null, 2));
-  }
-
-  const lunarCmd = await loadLunarCommand(
-    version,
-    enableBlacklistedMods,
-    { root: lunarConfig.launchDirectory, lunar: lunarPath },
-    {
-      jvm: "",
-      lunar: `--width ${lunarConfig.resolution.width} --height ${
-        lunarConfig.resolution.height
-      } ${server != "None" ? `--server "${server}"` : ""}`,
-    }
-  );
-
-  await runShell(lunarCmd);
-} else {
-  console.log("Starting Lunar...");
-
-  const lunarCmd = await loadLunarCommand(
-    lunarConfig.selectedSubversion,
-    localConfig.enableBlacklistedMods,
-    {
-      root: lunarConfig.launchDirectory,
-      lunar: localConfig.customLunarPath
-        ? localConfig.customLunarPath
-        : await joinPath(dir("home"), ".lunarclient"),
-    },
-    {
-      jvm: "",
-      lunar: `--width ${lunarConfig.resolution.width} --height ${
-        lunarConfig.resolution.height
-      } ${
-        localConfig.serverIP != "None"
-          ? `--server "${localConfig.serverIP}"`
-          : ""
-      }`,
-    }
-  );
-
-  await runShell(lunarCmd);
-}
+await Deno.writeTextFile("tmp.bat", script);
+await runShell("cmd.exe /c tmp.bat");
+await Deno.remove("tmp.bat");

@@ -1,7 +1,10 @@
-lcf2*
+*mc2*
 *.txt
 logs
 overrides
 cache
 
 config.json
+
+level.dat
+tmp.bat
